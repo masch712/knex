@@ -48,9 +48,32 @@ export default class Oracle_Transaction extends Transaction {
         return cnx;
       });
     }).disposer(function(connection) {
-      debugTx('%s: releasing connection', t.txid);
-      connection.isTransaction = false;
-      connection.commitAsync()
+      //If this is an inner transaction, we only want to disconnect it when the outer transaction commits/rolls back
+      if (t.outerTx) {
+        t.outerTx.once('completed', function() {
+          debugTx('%s: handling completed event in inner trx', t.txid);
+          debugTx('%s: releasing connection', t.txid);
+          connection.isTransaction = false;
+          connection.commitAsync()
+          .then(function(err) {
+            if (err) {
+              this._rejecter(err);
+            }
+            if (!config.connection) {
+              t.client.releaseConnection(connection);
+            } else {
+              debugTx('%s: not releasing external connection', t.txid);
+            }
+          });
+        });
+      }
+      // If this is the outermost transaction, fire off the event to release the child connections, then release thyself
+      else {
+        debugTx('%s: emitting outermost trx completion event', t.txid);
+        t.emit('completed');
+        debugTx('%s: releasing connection', t.txid);
+        connection.isTransaction = false;
+        connection.commitAsync()
         .then(function(err) {
           if (err) {
             this._rejecter(err);
@@ -61,6 +84,7 @@ export default class Oracle_Transaction extends Transaction {
             debugTx('%s: not releasing external connection', t.txid);
           }
         });
+      }
     });
   }
 

@@ -132,6 +132,7 @@ module.exports = function(knex) {
   })
 
   test('transaction savepoint rollback on outer transaction returned rejected promise', function (t) {
+    t.plan(6);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -178,7 +179,8 @@ module.exports = function(knex) {
     })
   })
 
-  test('doubly-nested and single-nested transactions both rollback on outer transaction returned rejected promise', function (t) {
+  test('doubly-nested, single-nested, and outer transactions all rollback on outer transaction returned rejected promise', function (t) {
+    t.plan(7);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -186,12 +188,11 @@ module.exports = function(knex) {
     var trx1Rejected
     return knex.transaction(function (trx1) {
       return trx1.insert({id: 1, name: 'A'}).into('test_table').then(function () {
-        // Nested transaction (savepoint)
         return trx1.transaction(function (trx2) {
           return trx2.table('test_table').insert({id: 2, name: 'B'}).then(function () {
             return trx2.transaction(function (trx3) {
               return trx3.table('test_table').insert({id: 3, name: 'C'}).then(function () {
-                return trx2('test_table').then(function (results) {
+                return trx3('test_table').then(function (results) {
                   t.equal(results.length, 3, 'Three rows inserted')
                 })
               })
@@ -216,8 +217,8 @@ module.exports = function(knex) {
     })
     .finally(function () {
       // trx1: BEGIN, INSERT, ROLLBACK
-      // trx2: SAVEPOINT, INSERT
-      // trx3: SAVEPOINT, INSERT, SELECT
+      // trx2: SAVEPOINT, INSERT (savepoint rolledback and erased implicitly)
+      // trx3: SAVEPOINT, INSERT, SELECT (savepoint rolledback and erased implicitly)
       // oracle & mssql: BEGIN & ROLLBACK not reported as queries
       var expectedTrx1QueryCount =
         knex.client.dialect === 'oracle' ||
@@ -228,9 +229,128 @@ module.exports = function(knex) {
       expectedTrx1QueryCount += expectedTrx2QueryCount
       t.equal(trx1QueryCount, expectedTrx1QueryCount, 'Expected number of parent transaction SQL queries executed')
       t.equal(trx2QueryCount, expectedTrx2QueryCount, 'Expected number of nested transaction SQL queries executed')
+      t.equal(trx3QueryCount, expectedTrx3QueryCount, 'Expected number of nested transaction SQL queries executed')
       t.equal(trx1Rejected, true, 'Outer transaction promise rejected')
       return knex.select('*').from('test_table').then(function (results) {
         t.equal(results.length, 0, 'Zero rows inserted')
+      })
+    })
+  })
+
+  test('doubly-nested, single-nested, and outer transactions all rollback on single-nested transaction returned uncaught rejected promise', function (t) {
+    t.plan(7);
+    var testError = new Error('Rolling Back Savepoint')
+    var trx1QueryCount = 0
+    var trx2QueryCount = 0
+    var trx3QueryCount = 0
+    var trx1Rejected
+    return knex.transaction(function (trx1) {
+      return trx1.insert({id: 1, name: 'A'}).into('test_table').then(function () {
+        // Nested transaction (savepoint)
+        return trx1.transaction(function (trx2) {
+          return trx2.table('test_table').insert({id: 2, name: 'B'}).then(function () {
+            return trx2.transaction(function (trx3) {
+              return trx3.table('test_table').insert({id: 3, name: 'C'}).then(function () {
+                return trx3('test_table').then(function (results) {
+                  t.equal(results.length, 3, 'Three rows inserted')
+                })
+              })
+            })
+            .on('query', function (query) {
+              ++trx3QueryCount;
+            }).then(function () {
+              throw testError;
+            });
+          })
+        })
+        .on('query', function (query) {
+          ++trx2QueryCount
+        })
+      })
+    })
+    .on('query', function () {
+      ++trx1QueryCount
+    }).catch(function (err) {
+      t.equal(err, testError, 'Expected error reported')
+      trx1Rejected = true
+    })
+    .finally(function () {
+      // trx1: BEGIN, INSERT, ROLLBACK
+      // trx2: SAVEPOINT, INSERT, ROLLBACK TO SAVEPOINT
+      // trx3: SAVEPOINT INSERT, SELECT (this savepoint is implicitly rolledback and erased)
+      // oracle & mssql: BEGIN & ROLLBACK not reported as queries
+      var expectedTrx1QueryCount =
+        knex.client.dialect === 'oracle' ||
+        knex.client.dialect === 'mssql' ? 1 : 3
+      var expectedTrx2QueryCount = 3
+      var expectedTrx3QueryCount = 3
+      expectedTrx2QueryCount += expectedTrx3QueryCount;
+      expectedTrx1QueryCount += expectedTrx2QueryCount
+      t.equal(trx1QueryCount, expectedTrx1QueryCount, 'Expected number of outer transaction SQL queries executed')
+      t.equal(trx2QueryCount, expectedTrx2QueryCount, 'Expected number of single-nested transaction SQL queries executed')
+      t.equal(trx3QueryCount, expectedTrx3QueryCount, 'Expected number of double-nested transaction SQL queries executed')
+      t.equal(trx1Rejected, true, 'Outer transaction promise rejected')
+      return knex.select('*').from('test_table').then(function (results) {
+        t.equal(results.length, 0, 'Zero rows inserted')
+      })
+    })
+  })
+
+  test('doubly-nested and single-nested transaction both rollback on single-nested transaction returned caught rejected promise', function (t) {
+    t.plan(7);
+    var testError = new Error('Rolling Back Savepoint')
+    var trx1QueryCount = 0
+    var trx2QueryCount = 0
+    var trx3QueryCount = 0
+    var trx2Rejected
+    return knex.transaction(function (trx1) {
+      return trx1.insert({id: 1, name: 'A'}).into('test_table').then(function () {
+        return trx1.transaction(function (trx2) {
+          return trx2.table('test_table').insert({id: 2, name: 'B'}).then(function () {
+            return trx2.transaction(function (trx3) {
+              return trx3.table('test_table').insert({id: 3, name: 'C'}).then(function () {
+                return trx3('test_table').then(function (results) {
+                  t.equal(results.length, 3, 'Three rows inserted')
+                })
+              })
+            })
+            .on('query', function () {
+              ++trx3QueryCount;
+            }).then(function () {
+              throw testError;
+            });
+          })
+        })
+        .on('query', function () {
+          ++trx2QueryCount
+        })
+      }).catch(function (err) {
+        t.equal(err, testError, 'Expected error reported')
+        trx2Rejected = true
+      })
+    })
+    .on('query', function () {
+      ++trx1QueryCount
+    })
+    .finally(function () {
+      // trx1: BEGIN, INSERT, ROLLBACK
+      // trx2: SAVEPOINT, INSERT, ROLLBACK TO SAVEPOINT
+      // trx3: SAVEPOINT, INSERT, SELECT
+      // oracle & mssql: BEGIN & ROLLBACK not reported as queries
+      var expectedTrx1QueryCount =
+        knex.client.dialect === 'oracle' ||
+        knex.client.dialect === 'mssql' ? 1 : 3
+      var expectedTrx2QueryCount = 3
+      var expectedTrx3QueryCount = 3
+      expectedTrx2QueryCount += expectedTrx3QueryCount;
+      expectedTrx1QueryCount += expectedTrx2QueryCount
+      t.equal(trx1QueryCount, expectedTrx1QueryCount, 'Expected number of parent transaction SQL queries executed')
+      t.equal(trx2QueryCount, expectedTrx2QueryCount, 'Expected number of single-nested transaction SQL queries executed')
+      t.equal(trx3QueryCount, expectedTrx3QueryCount, 'Expected number of double-nested transaction SQL queries executed')
+      t.equal(trx2Rejected, true, 'Single-nested transaction promise rejected')
+      return knex.select('*').from('test_table').then(function (results) {
+        //TODO: assert deep equality between this row and A1
+        t.equal(results.length, 1, 'One row inserted')
       })
     })
   })

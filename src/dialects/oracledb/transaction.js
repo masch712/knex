@@ -48,37 +48,18 @@ export default class Oracle_Transaction extends Transaction {
         return cnx;
       });
     }).disposer(function(connection) {
-      var dispose = function () {
+      connection.isTransaction = false;
+      if (!config.connection) {
         debugTx('%s: releasing connection', t.txid);
-        connection.isTransaction = false;
-        return connection.commitAsync()
-        .then(function(err) {
-          if (err) {
-            this._rejecter(err);
-          }
-          if (!config.connection) {
-            //TODO: should i have added 'return' here?
-            return t.client.releaseConnection(connection);
-          } else {
-            debugTx('%s: not releasing external connection', t.txid);
-          }
+        // Only commit the outer-most transaction; inner transactions should have already been committed or rolled back.
+        return (t.outerTx ? Promise.resolve() : connection.commitAsync())
+        .then(function () {
+          return t.client.releaseConnection(connection);
         });
-      };
-      //If this is the outermost transaction, dispose away!
-      if (!t.outerTx) {
-        dispose();
+      } else {
+        debugTx('%s: not releasing external connection', t.txid);
+        return Promise.resolve();
       }
-      else {
-        // If this is a nested transaction, dispose after its outer transaction and previousSibling are resolved
-        t.outerTx._promise.finally(function () {
-          return t._previousSibling;
-        }
-        //Swallow upstream trx errors; this promise chain is only concerned with the timing of this trx's disposal
-        ).catch(function (err) {}).finally(function () {
-          return dispose();
-        });
-      }
-      return t._disposalPromise;
     });
   }
 

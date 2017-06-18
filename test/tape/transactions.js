@@ -4,6 +4,9 @@ var harness    = require('./harness')
 var tape       = require('tape')
 var JSONStream = require('JSONStream')
 
+//TODO: test committing many nested transactions too?
+//TODO: test sibling PARALLEL (i.e. promise.all style) transactions can't see each other's shit rollback in expected ways
+
 module.exports = function(knex) {
 
   tape(knex.client.driverName + ' - transactions: before', function(t) {
@@ -173,11 +176,14 @@ module.exports = function(knex) {
       t.equal(trx1QueryCount, expectedTrx1QueryCount, 'Expected number of parent transaction SQL queries executed')
       t.equal(trx2QueryCount, expectedTrx2QueryCount, 'Expected number of nested transaction SQL queries executed')
       t.equal(trx1Rejected, true, 'Outer transaction promise rejected')
+
       return knex.select('*').from('test_table').then(function (results) {
         t.equal(results.length, 0, 'Zero rows inserted')
       })
     })
   })
+
+
 
   test('doubly-nested, single-nested, and outer transactions all rollback on outer transaction returned rejected promise', function (t) {
     t.plan(7);
@@ -291,7 +297,7 @@ module.exports = function(knex) {
       t.equal(trx3QueryCount, expectedTrx3QueryCount, 'Expected number of double-nested transaction SQL queries executed')
       t.equal(trx1Rejected, true, 'Outer transaction promise rejected')
       return knex.select('*').from('test_table').then(function (results) {
-        t.equal(results.length, 0, 'Zero rows inserted')
+        t.equal(results.length, 1, 'One row inserted')
       })
     })
   })
@@ -395,6 +401,7 @@ module.exports = function(knex) {
       })
     })
   })
+
 
   test('sibling nested transactions - second created after first one commits', function (t) {
     var secondTransactionCompleted = false
@@ -668,5 +675,4 @@ module.exports = function(knex) {
         });
     })
   }
-
 }

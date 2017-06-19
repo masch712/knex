@@ -6,6 +6,7 @@ var JSONStream = require('JSONStream')
 
 //TODO: test committing many nested transactions too?
 //TODO: test sibling PARALLEL (i.e. promise.all style) transactions can't see each other's shit rollback in expected ways
+//    In order to get this to pass, I'll probably have to keep connections until the outerTx is released
 
 module.exports = function(knex) {
 
@@ -135,7 +136,6 @@ module.exports = function(knex) {
   })
 
   test('transaction savepoint rollback on outer transaction returned rejected promise', function (t) {
-    t.plan(6);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -186,7 +186,6 @@ module.exports = function(knex) {
 
 
   test('doubly-nested, single-nested, and outer transactions all rollback on outer transaction returned rejected promise', function (t) {
-    t.plan(7);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -244,7 +243,6 @@ module.exports = function(knex) {
   })
 
   test('doubly-nested, single-nested, and outer transactions all rollback on single-nested transaction returned uncaught rejected promise', function (t) {
-    t.plan(7);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -303,7 +301,6 @@ module.exports = function(knex) {
   })
 
   test('doubly-nested and single-nested transaction both rollback on single-nested transaction returned caught rejected promise', function (t) {
-    t.plan(7);
     var testError = new Error('Rolling Back Savepoint')
     var trx1QueryCount = 0
     var trx2QueryCount = 0
@@ -662,7 +659,6 @@ module.exports = function(knex) {
 
   if (knex.client.driverName === 'pg') {
     tape('allows postgres ? operator in knex.raw() if no bindings given #519 and #888', function (t) {
-      t.plan(1)
       knex.from('test_table_two')
         .whereRaw("(json_data->'me')::jsonb \\?& array['keyOne', 'keyTwo']")
         .where('id', '>', 1)

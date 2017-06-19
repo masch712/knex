@@ -50,10 +50,10 @@ export default class Oracle_Transaction extends Transaction {
     }).disposer(function(connection) {
       connection.isTransaction = false;
       if (!config.connection) {
-        debugTx('%s: releasing connection', t.txid);
         // Only commit the outer-most transaction; inner transactions should have already been committed or rolled back.
         return (t.outerTx ? Promise.resolve() : connection.commitAsync())
         .then(function () {
+          debugTx('%s: releasing connection %s', t.txid, connection.__knexUid);
           return t.client.releaseConnection(connection);
         });
       } else {
